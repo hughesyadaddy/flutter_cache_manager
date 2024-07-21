@@ -5,7 +5,7 @@ import 'package:flutter_cache_manager/src/storage/cache_info_repositories/helper
 import 'package:flutter_cache_manager/src/storage/cache_object.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 const _tableCacheObject = 'cacheObject';
 
