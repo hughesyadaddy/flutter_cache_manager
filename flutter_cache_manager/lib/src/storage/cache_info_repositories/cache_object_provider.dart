@@ -25,10 +25,10 @@ class CacheObjectProvider extends CacheInfoRepository
     if (!shouldOpenOnNewConnection()) {
       return openCompleter!.future;
     }
-
+    sqfliteFfiInit();
     final path = await _getPath();
     await File(path).parent.create(recursive: true);
-    sqfliteFfiInit();
+
     var databaseFactory = databaseFactoryFfi;
     db = await databaseFactory.openDatabase(
       path,
