@@ -25,11 +25,17 @@ class CacheObjectProvider extends CacheInfoRepository
     if (!shouldOpenOnNewConnection()) {
       return openCompleter!.future;
     }
+
     final path = await _getPath();
     await File(path).parent.create(recursive: true);
-    db = await openDatabase(path, version: 3,
+    sqfliteFfiInit();
+    var databaseFactory = databaseFactoryFfi;
+    db = await databaseFactory.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 3,
         onCreate: (Database db, int version) async {
-      await db.execute('''
+          await db.execute('''
       create table $_tableCacheObject (
         ${CacheObject.columnId} integer primary key,
         ${CacheObject.columnUrl} text,
@@ -43,46 +49,51 @@ class CacheObjectProvider extends CacheInfoRepository
         create unique index $_tableCacheObject${CacheObject.columnKey}
         ON $_tableCacheObject (${CacheObject.columnKey});
       ''');
-    }, onUpgrade: (Database db, int oldVersion, int newVersion) async {
-      // Migration for adding the optional key, does the following:
-      // Adds the new column
-      // Creates a unique index for the column
-      // Migrates over any existing URLs to keys
-      if (oldVersion <= 1) {
-        var alreadyHasKeyColumn = false;
-        try {
-          await db.execute('''
+        },
+        onUpgrade: (Database db, int oldVersion, int newVersion) async {
+          // Migration for adding the optional key, does the following:
+          // Adds the new column
+          // Creates a unique index for the column
+          // Migrates over any existing URLs to keys
+          if (oldVersion <= 1) {
+            var alreadyHasKeyColumn = false;
+            try {
+              await db.execute('''
             alter table $_tableCacheObject
             add ${CacheObject.columnKey} text;
             ''');
-        } on DatabaseException catch (e) {
-          if (!e.isDuplicateColumnError(CacheObject.columnKey)) rethrow;
-          alreadyHasKeyColumn = true;
-        }
-        await db.execute('''
+            } on DatabaseException catch (e) {
+              if (!e.isDuplicateColumnError(CacheObject.columnKey)) rethrow;
+              alreadyHasKeyColumn = true;
+            }
+            await db.execute('''
           update $_tableCacheObject
             set ${CacheObject.columnKey} = ${CacheObject.columnUrl}
             where ${CacheObject.columnKey} is null;
           ''');
 
-        if (!alreadyHasKeyColumn) {
-          await db.execute('''
+            if (!alreadyHasKeyColumn) {
+              await db.execute('''
             create index $_tableCacheObject${CacheObject.columnKey}
               on $_tableCacheObject (${CacheObject.columnKey});
             ''');
-        }
-      }
-      if (oldVersion <= 2) {
-        try {
-          await db.execute('''
+            }
+          }
+          if (oldVersion <= 2) {
+            try {
+              await db.execute('''
         alter table $_tableCacheObject
         add ${CacheObject.columnLength} integer;
         ''');
-        } on DatabaseException catch (e) {
-          if (!e.isDuplicateColumnError(CacheObject.columnLength)) rethrow;
-        }
-      }
-    });
+            } on DatabaseException catch (e) {
+              if (!e.isDuplicateColumnError(CacheObject.columnLength)) {
+                rethrow;
+              }
+            }
+          }
+        },
+      ),
+    );
     return opened();
   }
 
