@@ -230,16 +230,27 @@ class CacheObjectProvider extends CacheInfoRepository
     return _path!;
   }
 
-  // Migration for pre-V2 path on iOS and macOS
   Future<void> _migrateOldDbPath(String newDbPath) async {
-    var databaseFactory = sqflite_ffi.databaseFactoryFfi;
-    final oldDbPath =
-        join(await databaseFactory.getDatabasesPath(), '$databaseName.db');
-    if (oldDbPath != newDbPath && await File(oldDbPath).exists()) {
-      try {
-        await File(oldDbPath).rename(newDbPath);
-      } on FileSystemException {
-        // If we cannot read the old db, a new one will be created.
+    if (Platform.isWindows) {
+      var databaseFactory = sqflite_ffi.databaseFactoryFfi;
+      final oldDbPath =
+          join(await databaseFactory.getDatabasesPath(), '$databaseName.db');
+      if (oldDbPath != newDbPath && await File(oldDbPath).exists()) {
+        try {
+          await File(oldDbPath).rename(newDbPath);
+        } on FileSystemException {
+          // If we cannot read the old db, a new one will be created.
+        }
+      }
+    } else {
+      final oldDbPath =
+          join(await sqflite.getDatabasesPath(), '$databaseName.db');
+      if (oldDbPath != newDbPath && await File(oldDbPath).exists()) {
+        try {
+          await File(oldDbPath).rename(newDbPath);
+        } on FileSystemException {
+          // If we cannot read the old db, a new one will be created.
+        }
       }
     }
   }
