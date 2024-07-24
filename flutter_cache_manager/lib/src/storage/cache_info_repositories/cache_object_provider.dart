@@ -5,19 +5,18 @@ import 'package:flutter_cache_manager/src/storage/cache_info_repositories/helper
 import 'package:flutter_cache_manager/src/storage/cache_object.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart' as sqflite;
-import 'package:sqflite_common_ffi/sqflite_ffi.dart' as sqflite_ffi;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 const _tableCacheObject = 'cacheObject';
 
 class CacheObjectProvider extends CacheInfoRepository
     with CacheInfoRepositoryHelperMethods {
-  sqflite.Database? db;
+  Database? db;
   String? _path;
   String? databaseName;
 
   /// Either the path or the database name should be provided.
-  /// If the path is provided it should end with '{databaseName}.db',
+  /// If the path is provider it should end with '{databaseName}.db',
   /// for example: /data/user/0/com.example.example/databases/imageCache.db
   CacheObjectProvider({String? path, this.databaseName}) : _path = path;
 
@@ -26,38 +25,17 @@ class CacheObjectProvider extends CacheInfoRepository
     if (!shouldOpenOnNewConnection()) {
       return openCompleter!.future;
     }
+    sqfliteFfiInit();
     final path = await _getPath();
     await File(path).parent.create(recursive: true);
 
-    db = await _openDatabase(path);
-
-    return opened();
-  }
-
-  Future<sqflite.Database> _openDatabase(String path) async {
-    if (Platform.isWindows) {
-      sqflite_ffi.sqfliteFfiInit();
-      var databaseFactory = sqflite_ffi.databaseFactoryFfi;
-      return await databaseFactory.openDatabase(
-        path,
-        options: sqflite_ffi.OpenDatabaseOptions(
-          version: 3,
-          onCreate: _onCreate,
-          onUpgrade: _onUpgrade,
-        ),
-      );
-    } else {
-      return await sqflite.openDatabase(
-        path,
+    var databaseFactory = databaseFactoryFfi;
+    db = await databaseFactory.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
         version: 3,
-        onCreate: _onCreate,
-        onUpgrade: _onUpgrade,
-      );
-    }
-  }
-
-  Future<void> _onCreate(sqflite.Database db, int version) async {
-    await db.execute('''
+        onCreate: (Database db, int version) async {
+          await db.execute('''
       create table $_tableCacheObject (
         ${CacheObject.columnId} integer primary key,
         ${CacheObject.columnUrl} text,
@@ -67,50 +45,56 @@ class CacheObjectProvider extends CacheInfoRepository
         ${CacheObject.columnValidTill} integer,
         ${CacheObject.columnTouched} integer,
         ${CacheObject.columnLength} integer
-      );
-      create unique index $_tableCacheObject${CacheObject.columnKey}
-      ON $_tableCacheObject (${CacheObject.columnKey});
-    ''');
-  }
-
-  Future<void> _onUpgrade(
-      sqflite.Database db, int oldVersion, int newVersion) async {
-    if (oldVersion <= 1) {
-      var alreadyHasKeyColumn = false;
-      try {
-        await db.execute('''
-          alter table $_tableCacheObject
-          add ${CacheObject.columnKey} text;
-        ''');
-      } on sqflite.DatabaseException catch (e) {
-        if (!e.isDuplicateColumnError(CacheObject.columnKey)) rethrow;
-        alreadyHasKeyColumn = true;
-      }
-      await db.execute('''
-        update $_tableCacheObject
-          set ${CacheObject.columnKey} = ${CacheObject.columnUrl}
-          where ${CacheObject.columnKey} is null;
+        );
+        create unique index $_tableCacheObject${CacheObject.columnKey}
+        ON $_tableCacheObject (${CacheObject.columnKey});
       ''');
+        },
+        onUpgrade: (Database db, int oldVersion, int newVersion) async {
+          // Migration for adding the optional key, does the following:
+          // Adds the new column
+          // Creates a unique index for the column
+          // Migrates over any existing URLs to keys
+          if (oldVersion <= 1) {
+            var alreadyHasKeyColumn = false;
+            try {
+              await db.execute('''
+            alter table $_tableCacheObject
+            add ${CacheObject.columnKey} text;
+            ''');
+            } on DatabaseException catch (e) {
+              if (!e.isDuplicateColumnError(CacheObject.columnKey)) rethrow;
+              alreadyHasKeyColumn = true;
+            }
+            await db.execute('''
+          update $_tableCacheObject
+            set ${CacheObject.columnKey} = ${CacheObject.columnUrl}
+            where ${CacheObject.columnKey} is null;
+          ''');
 
-      if (!alreadyHasKeyColumn) {
-        await db.execute('''
-          create index $_tableCacheObject${CacheObject.columnKey}
-            on $_tableCacheObject (${CacheObject.columnKey});
+            if (!alreadyHasKeyColumn) {
+              await db.execute('''
+            create index $_tableCacheObject${CacheObject.columnKey}
+              on $_tableCacheObject (${CacheObject.columnKey});
+            ''');
+            }
+          }
+          if (oldVersion <= 2) {
+            try {
+              await db.execute('''
+        alter table $_tableCacheObject
+        add ${CacheObject.columnLength} integer;
         ''');
-      }
-    }
-    if (oldVersion <= 2) {
-      try {
-        await db.execute('''
-          alter table $_tableCacheObject
-          add ${CacheObject.columnLength} integer;
-        ''');
-      } on sqflite.DatabaseException catch (e) {
-        if (!e.isDuplicateColumnError(CacheObject.columnLength)) {
-          rethrow;
-        }
-      }
-    }
+            } on DatabaseException catch (e) {
+              if (!e.isDuplicateColumnError(CacheObject.columnLength)) {
+                rethrow;
+              }
+            }
+          }
+        },
+      ),
+    );
+    return opened();
   }
 
   @override
@@ -232,19 +216,14 @@ class CacheObjectProvider extends CacheInfoRepository
 
   // Migration for pre-V2 path on iOS and macOS
   Future<void> _migrateOldDbPath(String newDbPath) async {
-    String oldDbPath;
-    if (Platform.isWindows) {
-      var databaseFactory = sqflite_ffi.databaseFactoryFfi;
-      oldDbPath =
-          join(await databaseFactory.getDatabasesPath(), '$databaseName.db');
-    } else {
-      oldDbPath = join(await sqflite.getDatabasesPath(), '$databaseName.db');
-    }
+    var databaseFactory = databaseFactoryFfi;
+    final oldDbPath =
+        join(await databaseFactory.getDatabasesPath(), '$databaseName.db');
     if (oldDbPath != newDbPath && await File(oldDbPath).exists()) {
       try {
         await File(oldDbPath).rename(newDbPath);
       } on FileSystemException {
-        // If we cannot read the old db, a new one will be created.
+        // If we can not read the old db, a new one will be created.
       }
     }
   }
